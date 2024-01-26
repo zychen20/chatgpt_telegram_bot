@@ -39,17 +39,13 @@ logger = logging.getLogger(__name__)
 user_semaphores = {}
 user_tasks = {}
 
-HELP_MESSAGE = """Commands:
-⚪ /retry – Regenerate last bot answer
-⚪ /new – Start new dialog
-⚪ /mode – Select chat mode
-⚪ /settings – Show settings
-⚪ /balance – Show balance
-⚪ /help – Show help
-
-🎨 Generate images from text prompts in <b>👩‍🎨 Artist</b> /mode
-👥 Add bot to <b>group chat</b>: /help_group_chat
-🎤 You can send <b>Voice Messages</b> instead of text
+HELP_MESSAGE = """可用命令:
+⚪ /retry – 重新生成答案
+⚪ /new – 开始新对话
+⚪ /mode – 选择角色模式
+⚪ /settings – 选择模型 (可选GPT-4)
+⚪ /balance – 显示余额
+⚪ /help – 显示帮助
 """
 
 HELP_GROUP_CHAT_MESSAGE = """You can add bot to any <b>group chat</b> to help and entertain its participants!
@@ -86,6 +82,9 @@ async def register_user_if_not_exists(update: Update, context: CallbackContext, 
     if user.id not in user_semaphores:
         user_semaphores[user.id] = asyncio.Semaphore(1)
 
+    if db.get_user_attribute(user.id, "current_chat_mode") is None:
+        db.set_user_attribute(user.id, "current_chat_mode", "general")
+
     if db.get_user_attribute(user.id, "current_model") is None:
         db.set_user_attribute(user.id, "current_model", config.models["available_text_models"][0])
 
@@ -99,6 +98,10 @@ async def register_user_if_not_exists(update: Update, context: CallbackContext, 
             }
         }
         db.set_user_attribute(user.id, "n_used_tokens", new_n_used_tokens)
+    
+    # initial deposit of 5 dollars
+    if db.get_user_attribute(user.id, "deposit") is None:
+        db.set_user_attribute(user.id, "deposit", 5.0)
 
     # voice message transcription
     if db.get_user_attribute(user.id, "n_transcribed_seconds") is None:
@@ -135,11 +138,11 @@ async def start_handle(update: Update, context: CallbackContext):
     db.set_user_attribute(user_id, "last_interaction", datetime.now())
     db.start_new_dialog(user_id)
 
-    reply_text = "Hi! I'm <b>ChatGPT</b> bot implemented with OpenAI API 🤖\n\n"
+    reply_text = "我是部署于 Telegram 的 <b>ChatGPT</b> 机器人\n\n"
     reply_text += HELP_MESSAGE
 
     await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
-    await show_chat_modes_handle(update, context)
+    # await show_chat_modes_handle(update, context)
 
 
 async def help_handle(update: Update, context: CallbackContext):
@@ -194,6 +197,10 @@ async def message_handle(update: Update, context: CallbackContext, message=None,
     if update.message.chat.type != "private":
         _message = _message.replace("@" + context.bot.username, "").strip()
 
+    # check if user has enough balance
+    if not await check_enough_balance_handle(update):
+        return
+
     await register_user_if_not_exists(update, context, update.message.from_user)
     if await is_previous_message_not_answered_yet(update, context): return
 
@@ -209,7 +216,7 @@ async def message_handle(update: Update, context: CallbackContext, message=None,
         if use_new_dialog_timeout:
             if (datetime.now() - db.get_user_attribute(user_id, "last_interaction")).seconds > config.new_dialog_timeout and len(db.get_dialog_messages(user_id)) > 0:
                 db.start_new_dialog(user_id)
-                await update.message.reply_text(f"Starting new dialog due to timeout (<b>{config.chat_modes[chat_mode]['name']}</b> mode) ✅", parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f"因上轮对话已超时，现已开启新对话 (<b>{config.chat_modes[chat_mode]['name']}</b> 角色模式) ✅", parse_mode=ParseMode.HTML)
         db.set_user_attribute(user_id, "last_interaction", datetime.now())
 
         # in case of CancelledError
@@ -224,7 +231,7 @@ async def message_handle(update: Update, context: CallbackContext, message=None,
             await update.message.chat.send_action(action="typing")
 
             if _message is None or len(_message) == 0:
-                 await update.message.reply_text("🥲 You sent <b>empty message</b>. Please, try again!", parse_mode=ParseMode.HTML)
+                 await update.message.reply_text("🥲 你发送了空消息，请重试。", parse_mode=ParseMode.HTML)
                  return
 
             dialog_messages = db.get_dialog_messages(user_id, dialog_id=None)
@@ -306,7 +313,7 @@ async def message_handle(update: Update, context: CallbackContext, message=None,
         try:
             await task
         except asyncio.CancelledError:
-            await update.message.reply_text("✅ Canceled", parse_mode=ParseMode.HTML)
+            await update.message.reply_text("✅ 已取消", parse_mode=ParseMode.HTML)
         else:
             pass
         finally:
@@ -319,8 +326,8 @@ async def is_previous_message_not_answered_yet(update: Update, context: Callback
 
     user_id = update.message.from_user.id
     if user_semaphores[user_id].locked():
-        text = "⏳ Please <b>wait</b> for a reply to the previous message\n"
-        text += "Or you can /cancel it"
+        text = "⏳ 请等待 GPT 完成回复\n"
+        text += "或者使用 /cancel 命令打断回复"
         await update.message.reply_text(text, reply_to_message_id=update.message.id, parse_mode=ParseMode.HTML)
         return True
     else:
@@ -394,7 +401,7 @@ async def new_dialog_handle(update: Update, context: CallbackContext):
     db.set_user_attribute(user_id, "last_interaction", datetime.now())
 
     db.start_new_dialog(user_id)
-    await update.message.reply_text("Starting new dialog ✅")
+    await update.message.reply_text("开始新对话 ✅")
 
     chat_mode = db.get_user_attribute(user_id, "current_chat_mode")
     await update.message.reply_text(f"{config.chat_modes[chat_mode]['welcome_message']}", parse_mode=ParseMode.HTML)
@@ -410,12 +417,12 @@ async def cancel_handle(update: Update, context: CallbackContext):
         task = user_tasks[user_id]
         task.cancel()
     else:
-        await update.message.reply_text("<i>Nothing to cancel...</i>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("<i>未在对话中...</i>", parse_mode=ParseMode.HTML)
 
 
 def get_chat_mode_menu(page_index: int):
     n_chat_modes_per_page = config.n_chat_modes_per_page
-    text = f"Select <b>chat mode</b> ({len(config.chat_modes)} modes available):"
+    text = f"请选择 <b>角色模式</b>:"
 
     # buttons
     chat_mode_keys = list(config.chat_modes.keys())
@@ -462,25 +469,25 @@ async def show_chat_modes_handle(update: Update, context: CallbackContext):
 
 
 async def show_chat_modes_callback_handle(update: Update, context: CallbackContext):
-     await register_user_if_not_exists(update.callback_query, context, update.callback_query.from_user)
-     if await is_previous_message_not_answered_yet(update.callback_query, context): return
+    await register_user_if_not_exists(update.callback_query, context, update.callback_query.from_user)
+    if await is_previous_message_not_answered_yet(update.callback_query, context): return
 
-     user_id = update.callback_query.from_user.id
-     db.set_user_attribute(user_id, "last_interaction", datetime.now())
+    user_id = update.callback_query.from_user.id
+    db.set_user_attribute(user_id, "last_interaction", datetime.now())
 
-     query = update.callback_query
-     await query.answer()
+    query = update.callback_query
+    await query.answer()
 
-     page_index = int(query.data.split("|")[1])
-     if page_index < 0:
-         return
+    page_index = int(query.data.split("|")[1])
+    if page_index < 0:
+        return
 
-     text, reply_markup = get_chat_mode_menu(page_index)
-     try:
-         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-     except telegram.error.BadRequest as e:
-         if str(e).startswith("Message is not modified"):
-             pass
+    text, reply_markup = get_chat_mode_menu(page_index)
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    except telegram.error.BadRequest as e:
+        if str(e).startswith("Message is not modified"):
+            pass
 
 
 async def set_chat_mode_handle(update: Update, context: CallbackContext):
@@ -572,7 +579,7 @@ async def show_balance_handle(update: Update, context: CallbackContext):
     n_generated_images = db.get_user_attribute(user_id, "n_generated_images")
     n_transcribed_seconds = db.get_user_attribute(user_id, "n_transcribed_seconds")
 
-    details_text = "🏷️ Details:\n"
+    details_text = "🏷️ 各模型使用数据:\n"
     for model_key in sorted(n_used_tokens_dict.keys()):
         n_input_tokens, n_output_tokens = n_used_tokens_dict[model_key]["n_input_tokens"], n_used_tokens_dict[model_key]["n_output_tokens"]
         total_n_used_tokens += n_input_tokens + n_output_tokens
@@ -581,33 +588,71 @@ async def show_balance_handle(update: Update, context: CallbackContext):
         n_output_spent_dollars = config.models["info"][model_key]["price_per_1000_output_tokens"] * (n_output_tokens / 1000)
         total_n_spent_dollars += n_input_spent_dollars + n_output_spent_dollars
 
-        details_text += f"- {model_key}: <b>{n_input_spent_dollars + n_output_spent_dollars:.03f}$</b> / <b>{n_input_tokens + n_output_tokens} tokens</b>\n"
+        details_text += f"- {model_key}: <b>${n_input_spent_dollars + n_output_spent_dollars:.03f}</b> / <b>{n_input_tokens + n_output_tokens} 个 token</b>\n"
 
     # image generation
     image_generation_n_spent_dollars = config.models["info"]["dalle-2"]["price_per_1_image"] * n_generated_images
     if n_generated_images != 0:
-        details_text += f"- DALL·E 2 (image generation): <b>{image_generation_n_spent_dollars:.03f}$</b> / <b>{n_generated_images} generated images</b>\n"
+        details_text += f"- DALL·E 2 (图片生成): 生成了 <b>${image_generation_n_spent_dollars:.03f}</b> / <b>{n_generated_images} 张图片</b>\n"
 
     total_n_spent_dollars += image_generation_n_spent_dollars
 
     # voice recognition
     voice_recognition_n_spent_dollars = config.models["info"]["whisper"]["price_per_1_min"] * (n_transcribed_seconds / 60)
     if n_transcribed_seconds != 0:
-        details_text += f"- Whisper (voice recognition): <b>{voice_recognition_n_spent_dollars:.03f}$</b> / <b>{n_transcribed_seconds:.01f} seconds</b>\n"
+        details_text += f"- Whisper (语音识别): 使用了 <b>${voice_recognition_n_spent_dollars:.03f}</b> / <b>{n_transcribed_seconds:.01f} 秒</b>\n"
 
     total_n_spent_dollars += voice_recognition_n_spent_dollars
+    
+    # get initial deposit
+    total_deposit = db.get_user_attribute(user_id, "deposit")
 
-
-    text = f"You spent <b>{total_n_spent_dollars:.03f}$</b>\n"
-    text += f"You used <b>{total_n_used_tokens}</b> tokens\n\n"
+    text = f"你已使用 <b>${total_n_spent_dollars:.03f}</b>\n"
+    text += f"共 <b>{total_n_used_tokens}</b> 个 token\n"
+    text += f"剩余余额 <b>${total_deposit - total_n_spent_dollars:.03f}</b> \n\n"
     text += details_text
 
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+async def check_enough_balance_handle(update: Update):
+    user_id = update.message.from_user.id
+    db.set_user_attribute(user_id, "last_interaction", datetime.now())
+
+    # count total usage statistics
+    total_n_spent_dollars = 0
+    total_n_used_tokens = 0
+
+    n_used_tokens_dict = db.get_user_attribute(user_id, "n_used_tokens")
+    n_generated_images = db.get_user_attribute(user_id, "n_generated_images")
+    n_transcribed_seconds = db.get_user_attribute(user_id, "n_transcribed_seconds")
+    
+    for model_key in sorted(n_used_tokens_dict.keys()):
+        n_input_tokens, n_output_tokens = n_used_tokens_dict[model_key]["n_input_tokens"], n_used_tokens_dict[model_key]["n_output_tokens"]
+        total_n_used_tokens += n_input_tokens + n_output_tokens
+
+        n_input_spent_dollars = config.models["info"][model_key]["price_per_1000_input_tokens"] * (n_input_tokens / 1000)
+        n_output_spent_dollars = config.models["info"][model_key]["price_per_1000_output_tokens"] * (n_output_tokens / 1000)
+        total_n_spent_dollars += n_input_spent_dollars + n_output_spent_dollars
+
+    # image generation
+    image_generation_n_spent_dollars = config.models["info"]["dalle-2"]["price_per_1_image"] * n_generated_images
+    total_n_spent_dollars += image_generation_n_spent_dollars
+
+    # voice recognition
+    voice_recognition_n_spent_dollars = config.models["info"]["whisper"]["price_per_1_min"] * (n_transcribed_seconds / 60)
+    total_n_spent_dollars += voice_recognition_n_spent_dollars
+
+    total_deposit = db.get_user_attribute(user_id, "deposit")
+
+    if (total_deposit - total_n_spent_dollars <= 0):
+        await update.message.reply_text("余额不足！", parse_mode=ParseMode.HTML)
+        return False
+    else:
+        return True
 
 async def edited_message_handle(update: Update, context: CallbackContext):
     if update.edited_message.chat.type == "private":
-        text = "🥲 Unfortunately, message <b>editing</b> is not supported"
+        text = "🥲 很抱歉，编辑历史消息功能暂不可用"
         await update.edited_message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
@@ -638,12 +683,12 @@ async def error_handle(update: Update, context: CallbackContext) -> None:
 
 async def post_init(application: Application):
     await application.bot.set_my_commands([
-        BotCommand("/new", "Start new dialog"),
-        BotCommand("/mode", "Select chat mode"),
-        BotCommand("/retry", "Re-generate response for previous query"),
-        BotCommand("/balance", "Show balance"),
-        BotCommand("/settings", "Show settings"),
-        BotCommand("/help", "Show help message"),
+        BotCommand("/new", "开始新对话"),
+        BotCommand("/mode", "选择角色模式"),
+        BotCommand("/retry", "重新生成答案"),
+        BotCommand("/balance", "显示余额"),
+        BotCommand("/settings", "选择模型"),
+        BotCommand("/help", "显示帮助"),
     ])
 
 def run_bot() -> None:
@@ -660,9 +705,9 @@ def run_bot() -> None:
 
     # add handlers
     user_filter = filters.ALL
-    if len(config.allowed_telegram_usernames) > 0:
-        usernames = [x for x in config.allowed_telegram_usernames if isinstance(x, str)]
-        any_ids = [x for x in config.allowed_telegram_usernames if isinstance(x, int)]
+    if len(config.allowed_telegram_usernames) > 0 or len(config.allowed_telegram_ids) > 0:
+        usernames = [x for x in config.allowed_telegram_usernames]
+        any_ids = [int(x) for x in config.allowed_telegram_ids]
         user_ids = [x for x in any_ids if x > 0]
         group_ids = [x for x in any_ids if x < 0]
         user_filter = filters.User(username=usernames) | filters.User(user_id=user_ids) | filters.Chat(chat_id=group_ids)
