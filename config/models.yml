@@ -4,15 +4,15 @@ info:
   gpt-3.5-turbo-1106:
     type: chat_completion
     name: ChatGPT
-    description: ChatGPT 默认模型，支持长文对话 (16k context)。
+    description: 当前使用的是 ChatGPT 默认模型，即 GPT-3.5，支持长文对话 (16k context)。
 
     price_per_1000_input_tokens: 0.001
     price_per_1000_output_tokens: 0.002
 
     scores:
-      Smart: 3
-      Fast: 5
-      Cheap: 5
+      聪明: 3
+      速度: 5
+      便宜: 5
 
   gpt-3.5-turbo:
     type: chat_completion
@@ -56,15 +56,15 @@ info:
   gpt-4-1106-preview:
     type: chat_completion
     name: GPT-4
-    description: GPT-4 Turbo 模型。更聪明，更慢，更贵。支持超长文对话 (128k context)。
+    description: 当前使用的是 GPT-4 Turbo 模型。更聪明，但更贵。支持超长文对话 (128k context)。
 
     price_per_1000_input_tokens: 0.01
     price_per_1000_output_tokens: 0.03
 
     scores:
-      smart: 5
-      fast: 4
-      cheap: 3
+      聪明: 5
+      速度: 4
+      便宜: 3
 
   text-davinci-003:
     type: completion

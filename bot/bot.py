@@ -516,9 +516,9 @@ def get_settings_menu(user_id: int):
     text += "\n\n"
     score_dict = config.models["info"][current_model]["scores"]
     for score_key, score_value in score_dict.items():
-        text += "🟢" * score_value + "⚪️" * (5 - score_value) + f" – {score_key}\n\n"
+        text += f"{score_key}: " + "⭐" * score_value + "\n"
 
-    text += "\nSelect <b>model</b>:"
+    text += "\n选择<b>模型</b>:"
 
     # buttons to choose models
     buttons = []
@@ -645,7 +645,7 @@ async def check_enough_balance_handle(update: Update):
     total_deposit = db.get_user_attribute(user_id, "deposit")
 
     if (total_deposit - total_n_spent_dollars <= 0):
-        await update.message.reply_text("余额不足！", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("余额不足！使用 /balance 查询余额。", parse_mode=ParseMode.HTML)
         return False
     else:
         return True
