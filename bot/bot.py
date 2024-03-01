@@ -197,12 +197,12 @@ async def message_handle(update: Update, context: CallbackContext, message=None,
     if update.message.chat.type != "private":
         _message = _message.replace("@" + context.bot.username, "").strip()
 
+    await register_user_if_not_exists(update, context, update.message.from_user)
+    if await is_previous_message_not_answered_yet(update, context): return
+
     # check if user has enough balance
     if not await check_enough_balance_handle(update):
         return
-
-    await register_user_if_not_exists(update, context, update.message.from_user)
-    if await is_previous_message_not_answered_yet(update, context): return
 
     user_id = update.message.from_user.id
     chat_mode = db.get_user_attribute(user_id, "current_chat_mode")
